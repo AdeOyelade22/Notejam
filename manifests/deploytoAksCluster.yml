@@ -1,0 +1,65 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: myprodacr.azurecr.io
+        username: ${{ secrets.acr_myprodacr_username }}
+        password: ${{ secrets.acr_myprodacr_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/" -f  "Docker-compose.yml" -t myprodacr.azurecr.io/myprodacr.azurecr.io.notejam:latest --label dockerfile-path=Dockerfile
+        docker push myprodacr.azurecr.io/myprodacr.azurecr.io.notejam:latest
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_myaks_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep notejam-prod | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace notejam-prod`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: notejam-prod
+        container-registry-url: myprodacr.azurecr.io
+        container-registry-username: ${{ secrets.acr_myprodacr_username }}
+        container-registry-password: ${{ secrets.acr_myprodacr_password }}
+        secret-name: myaksdockerauth
+       
+    - uses: azure/k8s-bake@v1
+      with:
+        renderEngine: 'helm'
+        helmChart: notejam-Chart
+        releaseName: 'aks-helm-release'
+        helm-version: 'latest' 
+        silent: 'false'
+        overrideFiles: |
+          
+        overrides: |
+          replicas:2
+          image.repository:myprodacr.azurecr.io/myprodacr.azurecr.io.notejam
+          image.tag:latest
+          imagePullSecrets:
+            -name:myaksdockerauth
+      id: bake
+
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: notejam-prod
+        manifests: ${{ steps.bake.outputs.manifestsBundle }}
+        images: |
+          myprodacr.azurecr.io/myprodacr.azurecr.io.notejam:latest
+        imagepullsecrets: |
+          myaksdockerauth

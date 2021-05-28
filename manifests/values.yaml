@@ -1,0 +1,6 @@
+image:
+  registry: myprodacr.azurecr.io
+  name: notejam-prod
+  tag: latest
+dns:
+  name: 7d3549cb7070440c94e4.eastus.aksapp.io
